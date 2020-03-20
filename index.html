@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" Content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no" />
+    <title>Attention cross origin</title>
+    <style type="text/css">
+        * {
+            margin: 0;
+            padding: 0;
+        }
+        body::-webkit-scrollbar{
+            display: none;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            border-bottom: 2px solid gray;
+        }
+        #icon{
+            position: fixed;
+            width: 3.3vw;
+            top: 1vw;
+            right: 1.5vw;
+        }
+        #content{
+            position: fixed;
+            width: 36vw;
+            height: 100vh;
+            background-color: rgba(230, 210, 140, 0.95);
+            box-shadow: 0 .2vw 2vw gray;
+            overflow-y: scroll;
+            overflow-x: hidden;
+            display: none;
+        }
+        #page{
+            position: fixed;
+            top: 80vh;
+            right: 0;
+            height: 4vw;
+            width: 6vw;
+            font-size: 2vw;
+            line-height: 4vw;
+            text-align: center;
+            background-color: rgba(200, 200, 200, 0.7);
+            border-radius: 10% 0 0 10%;
+        }
+        li{
+            height: 4vw;
+            line-height: 4vw;
+            overflow-y: hidden;
+            border-bottom: 1px solid;
+            list-style-type: none;
+            user-select: none;
+        }
+    </style>
+    <script src="pdf.min.js"></script>
+    <script type="text/javascript">
+    const url = 'Beautiful.pdf'  //window.location.search.substring(1)
+    let [Canvases, cLen] = [[], 9]
+    let [curPDF, Content, Once] = [null, [], true]
+    let [fristPage, curPage, lastPage, Pages] = [1, 1, cLen]
+    let [pHeight, vHeight] = [1, window.screen.height / 2]
+    let [divIcon, divContent, divCanvas, divPage, divList] = [null]
+    let loadPdf = pdfjsLib.getDocument(url)
+
+    window.onresize = () => [pHeight,  vHeight] = [document.body.clientHeight / cLen, window.screen.height / 2]
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js'
+
+    let renderPage = (num, canvas) => {
+        curPDF.getPage(num).then(page => {
+            let viewport = page.getViewport({ scale: 2.0 })
+            canvas.height = viewport.height
+            canvas.width = viewport.width
+
+            page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport: viewport
+            })
+            if (Once && cLen == num) {
+                Once = false
+                pHeight = document.body.clientHeight / cLen
+                window.onscroll = updatePage
+            }
+        })
+    }
+
+    let movePage = (page, down) => {
+        let t = Canvases[down ? 0 : cLen - 1]
+        divCanvas.removeChild(t)
+        down ? divCanvas.append(t) : divCanvas.prepend(t)
+        renderPage(page, t)
+    }
+
+    let updatePage = () => {
+        let t = Math.ceil((document.documentElement.scrollTop + vHeight) / pHeight)
+        if (t != curPage) {
+            curPage = t
+            divPage.innerText = curPage + fristPage - 1
+            if (curPage == cLen - 2 && lastPage < Pages)
+                movePage(++lastPage, true, ++fristPage)
+            else if (curPage == 2 && fristPage > 1)
+                movePage(--fristPage, false, --lastPage)
+        }
+    }
+
+    let gotoPage = page => {
+        let [edge, top] = [2, 2]
+        if (page < 3)
+            top = edge = page == 2 ? 1 : 0
+        else if (page > Pages - (cLen - edge - 1))
+            top = edge = cLen - (Pages - page) - 1
+
+        for (let i = 0; i < cLen; i++)
+            renderPage(page - edge + i, Canvases[i])
+        fristPage = page - edge
+        lastPage = page + cLen - edge - 1
+        document.documentElement.scrollTop = pHeight * top
+    }
+
+    let init = () => {
+        divContent = document.getElementById('content')
+        divCanvas = document.getElementById('canvas')
+        divList = document.getElementById('list')
+        divIcon = document.getElementById('icon')
+        divPage = document.getElementById('page')
+
+        divIcon.onclick = e => {
+            divContent.style.cssText = `display: ${divContent.style.display == 'block' ? 'none' : 'block'}`
+            e.stopPropagation()
+        }
+        document.body.onclick = () => divContent.style.cssText = 'display: none'
+
+        loadPdf.then(doc => {
+            curPDF = doc
+            Pages = doc.numPages
+
+            curPDF.getOutline().then(outline => {
+                let [g, b, o] = [0, 0, outline]
+                let [keep, tree, son] = [true, []]
+
+                while (keep) {
+                    Content.push([o[b].title, o[b].dest[0].num - 1, g])
+                    son = o[b].items
+
+                    if (son.length) {
+                        tree.push([g, b, o])
+                        g = g + 1
+                        b = 0
+                        o = son
+                    } else {
+                        while (keep) {
+                            if (b++ < o.length - 1)
+                                break
+                            else if (tree.length)
+                                [g, b, o] = tree.pop()
+                            else
+                                keep = false
+                        }
+                    }
+                }
+
+                for(let i=0; i<Content.length; i++){
+                    li = document.createElement('li')
+                    li.onclick = () => gotoPage(Content[i][1])
+                    li.innerText = Content[i][0]
+                    li.style.cssText = `
+                        font-size: ${2 - Content[i][2] * 0.1}vw; 
+                        padding-left: ${Content[i][2] * 2.2 + 1}vw`
+                    divList.append(li)
+                }
+            }, () => {
+                document.body.removeChild(divIcon)
+                document.body.removeChild(divContent)
+            })
+
+            if (Pages < cLen) cLen = Pages
+
+            for (let i = 0; i < cLen; i++) {
+                let el = document.createElement('canvas')
+                divCanvas.append(el)
+                renderPage(i + 1, el)
+            }
+
+            Canvases = document.getElementsByTagName('canvas')
+        })
+    }
+    </script>
+</head>
+
+<body onload='init()'>
+    <img id='icon' src='content.svg'></img>
+    <div id='content'>
+        <div id='list'></div>
+    </div>
+    <div id='page'>1</div>
+    <div id='canvas'></div>
+</body>
+
+</html>
